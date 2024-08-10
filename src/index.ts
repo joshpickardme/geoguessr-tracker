@@ -1,16 +1,20 @@
 import { Request, Response } from "express";
 import { connectToDatabase } from "./database";
+import mongoose, { Model } from "mongoose";
 
 // Models
-import mongoose, { Model } from "mongoose";
-import MapModel, { IMap } from "./models/map"; // Adjust the import path as necessary
+import MapModel, { IMap } from "./models/map";
 import PlayerModel, { IPlayer } from "./models/player";
+import RoundModel, { IRound } from "./models/round";
 
 // Utils
 import checkMapNameExists from "./utils/checkMapNameExists";
+import getPlayerStats from "./utils/getPlayerStats";
 
 // Collections
+const mapsCollection: Model<IMap> = MapModel;
 const playersCollection: Model<IPlayer> = PlayerModel;
+const roundsCollection: Model<IRound> = RoundModel;
 
 const express = require("express");
 const app = express();
@@ -34,15 +38,32 @@ app.get("/api/ping", (req: Request, res: Response) => {
   res.send("pong");
 });
 
+app.get("/api/maps2", async (req: Request, res: Response) => {
+  try {
+    const maps = await mapsCollection.find().exec();
+
+    for (const map of maps) {
+      const rounds = await roundsCollection.find({ mapId: map.id });
+      console.log(rounds);
+    }
+    res.send("suc");
+  } catch (error) {
+    console.error("Error fetching maps", error);
+    throw error;
+  }
+});
+
 // Returns all maps
 app.get("/api/maps", async (req: Request, res: Response) => {
   try {
-    const mapsCollection: Model<IMap> = MapModel;
-
-    // Fetch documents
     const maps = await mapsCollection.find().exec();
 
-    res.send(maps);
+    const updatedMaps = maps.map((map) => ({
+      ...map.toObject(),
+      hello: "hello",
+    }));
+
+    res.send(updatedMaps);
   } catch (error) {
     console.error("Error fetching maps", error);
     throw error;
@@ -64,9 +85,6 @@ app.post("/api/map", async (req: Request, res: Response) => {
     const newMap = new MapModel({
       name,
       category,
-      rounds: rounds || [],
-      players: players || [],
-      complete: complete || false,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -85,10 +103,34 @@ app.post("/api/map", async (req: Request, res: Response) => {
 app.get("/api/players", async (req: Request, res: Response) => {
   try {
     const players = await playersCollection.find().exec();
-    res.status(200).json({ players: players });
+    res.status(200).json({ players });
   } catch (error) {
-    console.error(`Failed to find players: ${error}`);
-    res.status(500).json({ message: "Failed to find players" });
+    console.error("Error fetching players", error);
+    throw error;
+  }
+});
+
+app.get("/api/player/:id", async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid player ID format" });
+    }
+
+    const player = await playersCollection.findById(id);
+
+    if (!player) {
+      return res.status(404).json({ message: "Player does not exist" });
+    }
+
+    const stats = await getPlayerStats(id);
+    console.log(`Time spent playing: ${stats.timeSpentPlayingSeconds} seconds`);
+
+    res.status(200).json({ player });
+  } catch (error) {
+    console.error("Error fetching player", error);
+    throw error;
   }
 });
 
@@ -148,6 +190,8 @@ app.put("/api/player/:id", async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Invalid body format" });
     }
 
+    console.log(typeof id);
+
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: "Invalid player ID format" });
     }
@@ -166,5 +210,75 @@ app.put("/api/player/:id", async (req: Request, res: Response) => {
   } catch (error) {
     console.error(error);
     res.json({ message: `Failed to update player` });
+  }
+});
+
+app.get("/api/rounds", async (req: Request, res: Response) => {
+  try {
+    const rounds = await roundsCollection.find().exec();
+    res.status(200).send(rounds);
+  } catch (error) {
+    console.error(error);
+    throw error;
+  }
+});
+
+app.post("/api/round", async (req: Request, res: Response) => {
+  try {
+    const {
+      mapId,
+      answer,
+      latitude,
+      longitude,
+      streetView,
+      attempt,
+      round,
+      players,
+      startTime,
+      endTime,
+      score,
+    } = req.body;
+
+    const findMap = await mapsCollection.findById(mapId);
+    if (!findMap) {
+      return res.status(400).json({ message: "Map does not exist" });
+    }
+
+    for (const id of players) {
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ message: "Invalid player ID format" });
+      }
+
+      const findPlayer = await playersCollection.findById(id);
+      console.log(findPlayer);
+      if (!findPlayer) {
+        return res
+          .status(400)
+          .json({ message: "Player does not exist", player: id });
+      }
+    }
+
+    const newRound = new RoundModel({
+      mapId,
+      answer,
+      latitude,
+      longitude,
+      streetView,
+      attempt,
+      round,
+      players,
+      startTime,
+      endTime,
+      score,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    const savedRound = await newRound.save();
+
+    res.status(201).json({ savedRound });
+  } catch (error) {
+    console.error(error);
+    throw error;
   }
 });

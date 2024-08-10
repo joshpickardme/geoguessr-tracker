@@ -15,8 +15,8 @@ export interface IRound extends Document {
   attempt: Number;
   round: Number;
   players: Types.ObjectId[];
-  startTime: Date;
-  endTime: Date;
+  startTime: Number;
+  endTime: Number;
   score: Number;
   createdAt: Date;
   updatedAt: Date;
@@ -47,7 +47,7 @@ const roundSchema: Schema<IRound> = new Schema(
       max: 180,
     },
     streetView: {
-      type: Number,
+      type: String,
       required: true,
       match: [/^https?:\/\/[^\s/$.?#].[^\s]*$/, "Please enter a valid URL"],
       trim: true,
@@ -70,11 +70,11 @@ const roundSchema: Schema<IRound> = new Schema(
       },
     ],
     startTime: {
-      type: Date,
+      type: Number,
       required: true,
     },
     endTime: {
-      type: Date,
+      type: Number,
       required: true,
     },
     score: {

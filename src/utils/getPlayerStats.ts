@@ -7,19 +7,37 @@ import RoundModel, { IRound } from "../models/round"; // Adjust the import path 
 import getRoundDuration from "./getRoundDuration";
 
 export default async function getPlayerStats(id: string) {
-  let timeSpentPlayingSeconds = 0;
+  let secondsSpent = 0;
+  let minutesSpent = 0;
+  let hoursSpent = 0;
+  let totalScore = 0;
+  let roundsPlayed = 0;
+  let formattedTime = "";
 
   try {
     const rounds = await RoundModel.find({ players: id });
     for (const round of rounds) {
+      roundsPlayed++;
+      totalScore += round.score.valueOf();
       const roundDuration = getRoundDuration(
         round.startTime.valueOf(),
         round.endTime.valueOf()
       );
-      timeSpentPlayingSeconds += roundDuration;
+      secondsSpent += roundDuration;
     }
+    minutesSpent = secondsSpent / 60;
+    hoursSpent = minutesSpent / 60;
     return {
-      timeSpentPlayingSeconds,
+      time: {
+        secondsSpent,
+        minutesSpent,
+        hoursSpent,
+        formattedTime,
+      },
+      other: {
+        totalScore,
+        roundsPlayed,
+      },
     };
   } catch (error) {
     console.error(error);

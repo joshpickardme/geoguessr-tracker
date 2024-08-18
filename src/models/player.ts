@@ -2,6 +2,16 @@ import mongoose, { Schema, Document, ObjectId, Types } from "mongoose";
 
 export interface IPlayer extends Document {
   name: String;
+  stats?: {
+    time?: {
+      secondsSpent: Number;
+      minutesSpent: Number;
+      hoursSpent: Number;
+      formattedTime: String;
+    };
+    totalScore: Number;
+    roundsPlayed: Number;
+  };
   createdAt: Date;
   updatedAt: Date;
 }

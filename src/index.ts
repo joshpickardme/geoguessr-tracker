@@ -10,6 +10,7 @@ import RoundModel, { IRound } from "./models/round";
 // Utils
 import checkMapNameExists from "./utils/checkMapNameExists";
 import getPlayerStats from "./utils/getPlayerStats";
+import validateObjectIds from "./utils/validateObjectIds";
 
 // Collections
 const mapsCollection: Model<IMap> = MapModel;
@@ -56,18 +57,58 @@ app.get("/api/maps2", async (req: Request, res: Response) => {
 // Returns all maps
 app.get("/api/maps", async (req: Request, res: Response) => {
   try {
-    const maps = await mapsCollection.find().exec();
+    // Fetch all rounds grouped by mapId
+    const roundsByMapId = await roundsCollection
+      .aggregate([
+        {
+          $group: {
+            _id: "$mapId",
+            rounds: { $push: "$$ROOT" }, // Push entire round document into rounds array
+          },
+        },
+      ])
+      .exec();
 
-    const updatedMaps = maps.map((map) => ({
-      ...map.toObject(),
-      hello: "hello",
-    }));
+    // Create a map from mapId to its rounds for easy lookup
+    const roundsMap = roundsByMapId.reduce((acc: any, roundGroup: any) => {
+      acc[roundGroup._id.toString()] = roundGroup.rounds;
+      return acc;
+    }, {});
 
-    res.send(updatedMaps);
+    // Fetch all maps from the mapsCollection
+    const allMaps = await mapsCollection.find().exec();
+
+    // Attach rounds to their respective maps
+    const mapsWithRounds = allMaps.map((map: any) => {
+      const rounds = roundsMap[map._id.toString()] || []; // Attach rounds or an empty array if none
+      return {
+        ...map._doc, // spread map document
+        rounds, // attach the associated rounds
+      };
+    });
+
+    // Return all maps with their associated rounds
+    res.json(mapsWithRounds);
   } catch (error) {
-    console.error("Error fetching maps", error);
-    throw error;
+    console.error(error);
+    res.status(500).json({ error: "Internal server error" });
   }
+});
+
+app.get("/api/map/:id", async (req: Request, res: Response) => {
+  const id = req.params.id;
+
+  const validateIds = validateObjectIds([id]);
+
+  if (validateIds.failed) {
+    return res
+      .status(400)
+      .json({ message: "Invalid ObjectID", id: validateIds.failedId });
+  }
+
+  const map = await mapsCollection.findById(id);
+
+  res.status(200).json(map);
 });
 
 app.post("/api/map", async (req: Request, res: Response) => {
@@ -100,6 +141,45 @@ app.post("/api/map", async (req: Request, res: Response) => {
   }
 });
 
+app.post("/api/maps", async (req: Request, res: Response) => {
+  const maps = req.body;
+  try {
+    const newMaps = await mapsCollection.insertMany(maps);
+    res.send(newMaps);
+  } catch (error) {
+    console.error(error);
+    throw error;
+  }
+});
+
+// Returns a random uncomplete map.
+app.get("/api/randomMap", async (req: Request, res: Response) => {
+  try {
+    const mapsWithRounds = await roundsCollection.distinct("mapId");
+
+    // Fetch maps that do not have associated rounds
+    const mapsWithoutRounds = await mapsCollection
+      .find({
+        _id: { $nin: mapsWithRounds }, // Exclude maps with rounds
+      })
+      .exec();
+
+    if (mapsWithoutRounds.length === 0) {
+      return res.status(404).json({ message: "No incomplete maps available" });
+    }
+
+    // Pick a random map from the filtered list
+    const randomMap =
+      mapsWithoutRounds[Math.floor(Math.random() * mapsWithoutRounds.length)];
+
+    // Return the random map
+    res.json(randomMap);
+  } catch (error) {
+    console.error(error);
+    throw error;
+  }
+});
+
 app.get("/api/players", async (req: Request, res: Response) => {
   try {
     const players = await playersCollection.find().exec();
@@ -113,9 +193,12 @@ app.get("/api/players", async (req: Request, res: Response) => {
 app.get("/api/player/:id", async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
+    const validateIds = validateObjectIds([id]);
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid player ID format" });
+    if (validateIds.failed) {
+      return res
+        .status(400)
+        .json({ message: "Invalid ObjectID", id: validateIds.failedId });
     }
 
     const player = await playersCollection.findById(id);
@@ -125,9 +208,11 @@ app.get("/api/player/:id", async (req: Request, res: Response) => {
     }
 
     const stats = await getPlayerStats(id);
-    console.log(`Time spent playing: ${stats.timeSpentPlayingSeconds} seconds`);
+    const playerObject = player.toObject();
+    playerObject.stats = stats.other;
+    playerObject.stats.time = stats.time;
 
-    res.status(200).json({ player });
+    res.status(200).json({ player: playerObject });
   } catch (error) {
     console.error("Error fetching player", error);
     throw error;
@@ -161,9 +246,12 @@ app.post("/api/player", async (req: Request, res: Response) => {
 app.delete("/api/player/:id", async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
+    const validateIds = validateObjectIds([id]);
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid player ID format" });
+    if (validateIds.failed) {
+      return res
+        .status(400)
+        .json({ message: "Invalid ObjectID", id: validateIds.failedId });
     }
 
     const player = await playersCollection.findById(id);
@@ -190,10 +278,12 @@ app.put("/api/player/:id", async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Invalid body format" });
     }
 
-    console.log(typeof id);
+    const validateIds = validateObjectIds([id]);
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid player ID format" });
+    if (validateIds.failed) {
+      return res
+        .status(400)
+        .json({ message: "Invalid ObjectID", id: validateIds.failedId });
     }
 
     const player = await playersCollection.findById(id);
@@ -223,6 +313,25 @@ app.get("/api/rounds", async (req: Request, res: Response) => {
   }
 });
 
+app.get("/api/round/:id", async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id;
+    const validateIds = validateObjectIds([id]);
+
+    if (validateIds.failed) {
+      return res
+        .status(400)
+        .json({ message: "Invalid ObjectID", id: validateIds.failedId });
+    }
+
+    const round = await roundsCollection.findById(id);
+    res.status(200).send(round);
+  } catch (error) {
+    console.error(error);
+    throw error;
+  }
+});
+
 app.post("/api/round", async (req: Request, res: Response) => {
   try {
     const {
@@ -239,18 +348,21 @@ app.post("/api/round", async (req: Request, res: Response) => {
       score,
     } = req.body;
 
+    const validateIds = validateObjectIds([mapId, ...players]);
+
+    if (validateIds.failed) {
+      return res
+        .status(400)
+        .json({ message: "Invalid ObjectID", id: validateIds.failedId });
+    }
+
     const findMap = await mapsCollection.findById(mapId);
     if (!findMap) {
       return res.status(400).json({ message: "Map does not exist" });
     }
 
     for (const id of players) {
-      if (!mongoose.Types.ObjectId.isValid(id)) {
-        return res.status(400).json({ message: "Invalid player ID format" });
-      }
-
       const findPlayer = await playersCollection.findById(id);
-      console.log(findPlayer);
       if (!findPlayer) {
         return res
           .status(400)
